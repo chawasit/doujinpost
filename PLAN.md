@@ -5,10 +5,14 @@ A self-publishing platform for doujin **manga** (image sets) and **novels**
 
 - **Optimised storage** — deduplicated, content-addressed masters; modern image
   codecs; per-user copies never stored, only derived on the fly.
-- **Embedded user tracking** — a forensic watermark ("traitor tracing") stamped
-  into each download so a leaked copy can be traced back to the account that
-  pulled it, built to survive re-compression and cropping via a *chained,
-  compression-resilient* encoding.
+- **Embedded user tracking** — a forensic watermark ("traitor tracing"). **⚠️
+  DEFERRED (post-v1, optional).** Designed in §3 but *not* built for launch: for a
+  free community scanlation site it has little meaning and it defeats CDN caching
+  — the exact image-delivery win we're chasing. Kept on the shelf for possible
+  licensed/official uploads later. See `docs/nekopost-comparison.md` §6.
+- **Community features** — shoutbox, title requests, creator profiles,
+  gamification/badges, ranking pages, public ratings — see
+  [`specs/community-features.md`](specs/community-features.md).
 - **Comments + a basic webboard** (forum).
 - **A DMCA takedown pipeline** — notice intake, escrow/takedown, counter-notice,
   repeat-infringer accounting.
@@ -61,28 +65,25 @@ in detail, and a phased roadmap. It is design-only — no code is committed yet.
         │ (metadata) │  │ queue+cache│  │  S3 / MinIO │  │
         └────────────┘  └─────┬─────┘  │  CAS blobs   │  │
                               │        └──────────────┘  │
-              ┌───────────────▼────────────┐   ┌─────────▼──────────────┐
-              │ Bun workers (TS)           │   │ Media/watermark worker │
-              │ transcode (sharp/libvips)· │   │ (Python: NumPy/SciPy/  │
-              │ dedup · notify · EPUB      │   │ reedsolo) — DCT embed  │
-              └────────────────────────────┘   │ + fountain/RS chain    │
-                                                └────────────────────────┘
+              ┌───────────────▼────────────┐   ┌─────────────────────────────┐
+              │ Bun workers (TS)           │   │ (deferred) Python watermark │
+              │ transcode (sharp/libvips)· │   │ sidecar — DCT/RS/fountain,  │
+              │ dedup · notify · EPUB      │   │ only if §3 is ever enabled  │
+              └────────────────────────────┘   └─────────────────────────────┘
 ```
 
-**Why this split (the polyglot boundary).** The user-facing app and API are a
-single TypeScript codebase on **Bun + ElysiaJS**, shipped as an installable
-**PWA** — Elysia's end-to-end types (Eden client) give the React frontend a
-typed API with no codegen, and Bun keeps dev/CI fast. Most workers (transcode
-via `sharp`/libvips, dedup, EPUB build, notifications) are Bun too.
+**One uniform TypeScript stack (v1).** The user-facing app and API are a single
+TypeScript codebase on **Bun + ElysiaJS**, shipped as an installable **PWA** —
+Elysia's end-to-end types (Eden client) give the React frontend a typed API with
+no codegen, and Bun keeps dev/CI fast. **All** v1 workers are Bun: transcode via
+`sharp`/libvips, dedup, EPUB build, notifications, ranking/trending rollups.
 
-The **one exception** is the forensic-watermark DSP from §3: mid-band DCT
-spread-spectrum embedding, Reed–Solomon, and fountain/LT decoding are far more
-mature and correct in Python's NumPy/SciPy/`reedsolo` stack than anything on the
-JS side. So the **media/watermark worker stays a Python service**, reached over
-the same Redis job queue behind a stable job contract. This isolates the only
-CPU-heavy, math-sensitive component and lets the rest of the system stay uniform
-TypeScript. If a pure-Bun DSP path proves out later, the contract makes it a
-drop-in swap.
+The Python **watermark sidecar** shown dashed above is **deferred with §3** — it
+is the only component that would break the single-language stack, and since
+watermarking is off the v1 roadmap, so is it. If §3 is ever enabled for licensed
+content, the DSP (mid-band DCT, Reed–Solomon, fountain/LT decode — far stronger
+in NumPy/SciPy/`reedsolo` than in JS) drops in behind the same Redis job contract
+without touching the rest of the system.
 
 **Stack**
 
@@ -92,8 +93,8 @@ drop-in swap.
 | UI base template    | **TailAdmin** (free React edition, MIT) — Tailwind design system, dashboard shells, dark mode |
 | Runtime            | **Bun**                                  |
 | API framework      | **ElysiaJS** (TypeScript) + Eden typed client |
-| Bun workers        | BullMQ (Redis) — transcode/dedup/notify/EPUB |
-| Media/watermark    | **Python** sidecar (NumPy, SciPy, `reedsolo`) on the same queue |
+| Bun workers        | BullMQ (Redis) — transcode/dedup/notify/EPUB/ranking |
+| Media/watermark    | **Deferred** — Python sidecar (NumPy, SciPy, `reedsolo`), only if §3 is enabled |
 | DB                 | PostgreSQL 16 (Drizzle ORM)              |
 | Cache / queue      | Redis                                    |
 | Object storage     | S3-compatible (MinIO self-host, or S3)   |
@@ -126,9 +127,10 @@ first commit; preserve the MIT `LICENSE`/attribution in the frontend package.
 ## 2. Storage design (the "optimised storage" requirement)
 
 The core idea: **store one canonical master per unique blob, deduplicated
-globally; never store a per-user watermarked copy.** Watermarking happens at
-*download* time on a derived stream, so N downloads of a work cost O(1) storage,
-not O(N).
+globally, and serve a shared rendition to everyone.** Because v1 does no per-user
+watermarking (§2.5), those renditions are identical across users and therefore
+edge-cacheable — N downloads of a work cost O(1) storage *and* mostly O(1) origin
+traffic.
 
 ### 2.1 Content-addressable store (CAS)
 
@@ -166,20 +168,34 @@ not O(N).
 - **Hot** (recent/popular): CDN + fast object tier.
 - **Cold**: works untouched for N months migrate to a cheaper/archive tier;
   first read after that pays a rehydrate latency (surfaced in the UI).
-- Derived renditions (thumbnails, EPUBs, watermarked streams) are cache, not
+- Derived renditions (thumbnails, AVIF/WebP pages, EPUBs) are cache, not
   source of truth — evictable and reproducible from the master + manifest.
 
-### 2.5 Dedup vs. watermarking — the key tension
+### 2.5 Delivery path (watermark deferred → CDN-cacheable)
 
-If we stored a watermarked copy per user, dedup would be impossible (every copy
-differs). We resolve this by keeping the **master clean and shared**, and
-injecting the per-user payload in a **streaming render step at download time**
-(Section 3). Storage stays deduplicated; only the short-lived output stream is
-user-specific.
+**v1 default: no per-user watermarking.** Reads and downloads serve the **shared,
+deduplicated rendition** straight from cache. Access is gated by a short-TTL
+**signed URL** (entitlement + rating/age checks minted server-side), but the
+bytes are identical for every user, so renditions are **fully CDN-cacheable at
+the edge** — this is the core service-health win over Nekopost (whose slow image
+loading is its #1 complaint). No Python DSP sidecar on the read path.
+
+> If watermarking is later enabled for licensed/official uploads (§3), it applies
+> only to that opt-in subset and only on *downloads/exports*, never in-app reads —
+> so the cache-defeating cost stays off the hot path. The old "dedup vs.
+> per-user copy" tension only returns for that subset.
 
 ---
 
 ## 3. Embedded user tracking — the *chained, compression-resilient* watermark
+
+> **⚠️ STATUS: DEFERRED — post-v1, optional.** This section is a preserved design,
+> **not** part of the launch build. It is not on the v1 roadmap (§8). Rationale in
+> `docs/nekopost-comparison.md` §6: for free scanlation it adds little and its
+> per-user renders defeat CDN caching. Revisit only if the platform hosts
+> licensed/official content that warrants leak attribution, and even then apply it
+> to downloads/exports of that subset only. Everything below stands as the design
+> for that future case.
 
 **Goal.** Given a leaked file (or a fragment of one), recover the account id that
 downloaded it, even after the pirate has re-saved/re-compressed the images,
@@ -381,6 +397,7 @@ tag_implications(tag_id, implies_tag_id)            -- auto-add entailed tags
 series_tags(series_id, tag_id, added_by, created_at)
 series(id, type[manga|novel], title, origin[original|translation], source_ref,
        language, status[ongoing|complete|hiatus|licensed], state, rating,
+       reading_mode[paged_ltr|paged_rtl|vertical],  -- drives which reader loads (webtoon = vertical)
        tag_ids[],                                   -- denormalised, GIN-indexed for filtering
        publisher_id, created_by, created_at)
 chapters(id, series_id, number, title, kind, is_extra, extra_type,
@@ -403,6 +420,24 @@ user_taste(user_id, tag_id, weight, updated_at)                              -- 
 item_similarity(series_id, other_series_id, score, method, computed_at)      -- batch collaborative
 trending(scope, series_id, score, window, computed_at)
 
+-- community — see specs/community-features.md
+profiles(user_id, bio, links, languages[], open_to_collab, banner_blob, updated_at)
+groups(id, slug, name, about, created_by, created_at)
+group_members(group_id, user_id, role)
+series_credits(series_id, creditee_id, credit)      -- translator|cleaner|typesetter|writer|artist
+shout_messages(id, room, user_id, body, created_at, deleted_by)
+shout_mutes(room, user_id, until, by)
+title_requests(id, requester_id, title, source_url, language, description, state, claimed_by, fulfilled_series_id, upvotes, created_at)
+request_votes(request_id, user_id)                  -- unique
+badges(id, slug, name, description, icon, criteria, is_admin_only)
+user_badges(user_id, badge_id, awarded_at, context)
+points_ledger(id, user_id, delta, reason, ref, settled, created_at)   -- append-only
+levels(user_id, xp, level, updated_at)
+rankings(surface, scope, series_id, rank, score, window, computed_at)
+ratings(series_id, user_id, score, created_at)      -- unique, public
+series_rating_agg(series_id, avg, count, updated_at)
+reactions(target_type[chapter|comment], target_id, user_id, emoji, created_at)
+
 comments(id, series_id, author_id, parent_id, body, state, created_at)
 boards(id, slug, title, mod_roles)
 threads(id, board_id, title, author_id, locked, pinned, created_at)
@@ -420,7 +455,7 @@ audit_log(id, actor, action, subject, meta, ts)    -- append-only
 ```
 
 Extras are chapters with `is_extra = true` (reusing the whole upload/storage/
-watermark/reader pipeline); Notices are lightweight text, never watermarked.
+reader pipeline); Notices are lightweight text.
 
 ---
 
@@ -435,45 +470,49 @@ watermark/reader pipeline); Notices are lightweight text, never watermarked.
   [`specs/user-verification.md`](specs/user-verification.md).
 - **Uploads**: strict MIME/magic sniffing, image bomb limits, metadata strip,
   virus scan hook, per-account quotas.
-- **Access**: entitlement checks on every download; signed, short-TTL URLs; no
-  hotlinking of masters (only rendered/watermarked streams leave the perimeter).
+- **Access**: entitlement + rating/age checks mint short-TTL **signed URLs**; no
+  hotlinking of masters (only cached renditions leave the perimeter). Identical
+  bytes per user → edge-cacheable (§2.5).
 - **Rate limiting** everywhere user-generated content or downloads occur.
 - **Age/rating gating** for adult doujin categories, per jurisdiction config.
-- **Legal**: DMCA designated agent registered; ToS discloses watermarking and
-  data retention; clear repeat-infringer policy for safe-harbour.
+- **Legal**: DMCA designated agent registered; ToS discloses data retention;
+  clear repeat-infringer policy for safe-harbour. (Watermark disclosure only
+  becomes relevant if §3 is ever enabled.)
 
 ---
 
 ## 8. Phased roadmap
 
+Watermarking (old Phases 2–3) is **removed from the v1 critical path** and
+delivery is plain signed-URL + CDN cache (§2.5). The reorder puts the
+Nekopost-parity community texture and the image-delivery win first.
+
 | Phase | Deliverable |
 |------:|-------------|
-| **0** | Repo scaffold, Docker Compose (Postgres/Redis/MinIO), CI, auth, migrations. |
-| **1** | Upload → CAS ingest → AVIF/WebP transcode → reader for manga; novel canonicalise + reader. Exact + perceptual dedup. |
-| **2** | Download broker + **watermark v1**: manga DCT spread-spectrum embed/detect, RS+fountain chain, admin detector tool. |
-| **3** | Novel stego layers + canonical fingerprint fallback; unify decoder. |
-| **4** | Comments + webboard on the shared content/moderation core. |
-| **5** | DMCA intake → takedown → counter-notice → strikes → transparency log. |
-| **6** | Storage tiering/lifecycle, cold-storage rehydrate, cost dashboards. |
-| **7** | Hardening: red-team the watermark (recompress/crop/subset suites), load test, moderation tooling, launch. |
-
-**Watermark validation harness** (built in Phase 2, run every phase after):
-an automated suite that takes a marked file, applies a battery of attacks
-(JPEG q=50/70/85, AVIF re-encode, 10–40% crop, page-subset, downscale, novel
-format-convert + whitespace-normalise) and reports the recovered-token rate per
-attack. Ship thresholds are defined against this suite, not vibes.
+| **0** | Repo scaffold, Docker Compose (Postgres/Redis/MinIO), CI, auth (password/Google), migrations. |
+| **1** | Upload → CAS ingest → AVIF/WebP transcode → **manga + webtoon (vertical) reader**; novel canonicalise + reader. Signed-URL delivery, **CDN edge caching**. Exact + perceptual dedup. |
+| **2** | Catalog: categories/sub-cats + tags, search (CJK/Thai), **ranking pages** (Weekly Popular / Latest / Recommended), public ratings. |
+| **3** | **Community pack** — creator profiles, shoutbox, title requests, comments; reading history + library + follows/notifications. See `specs/community-features.md`. |
+| **4** | **Gamification** — badges/points/levels; webboard/forum on the shared content/moderation core. |
+| **5** | DMCA intake → takedown → counter-notice → strikes → transparency log; T&S/legal spine (`docs/gaps-and-risks.md`). |
+| **6** | Storage tiering/lifecycle, cold-storage rehydrate, observability/backups/DR, cost dashboards. |
+| **7** | Hardening, load test, moderation tooling, i18n polish, launch. |
+| **later / optional** | **Watermark (§3)** — only if licensed/official uploads warrant it: DCT+RS+fountain, admin detector, and the attack-validation harness (JPEG/AVIF recompress, 10–40% crop, page-subset, stego-strip → recovered-token rate). Add **collusion-secure (Tardos) codes** at this point (`docs/gaps-and-risks.md` #6). |
 
 ---
 
-## 9. Open questions to settle before Phase 2
+## 9. Open questions
 
-1. **Redundancy vs. quality**: acceptable file-size/PSNR overhead for the manga
-   mark? Sets `redundancy_factor` and DCT strength.
-2. **Retention**: how long do `download_grants` live? (Attribution power vs.
-   data-minimisation.) Proposal: N months, then hash-only.
-3. **Novel honesty**: confirm we advertise novel attribution as *degrading to
-   work-level* under full stego-stripping.
-4. **Jurisdiction**: primary legal home decides DMCA specifics vs. EU/JP
-   equivalents and age-gating rules.
-5. **Screenshot resistance**: is reader-resolution screenshot survival in scope
-   for v1, or a later reader-side (visible/forensic) overlay?
+**Live (v1):**
+1. **Jurisdiction & operator entity**: the nonprofit legal home decides DMCA
+   specifics, age-gating rules, and who holds safe-harbour.
+2. **Search engine**: does Postgres FTS cover Thai/CJK tokenisation acceptably,
+   or do we need OpenSearch + a Thai analyser from the start? (gaps #8)
+3. **Gamification economy**: what do points/badges reward, and how do we avoid
+   incentivising low-quality spam uploads? (`specs/community-features.md`)
+4. **Shoutbox moderation load**: real-time chat is a moderation sink — global,
+   per-series, or launch read-mostly with tight rate limits?
+
+**Deferred with the watermark (only if §3 is revived):** redundancy-vs-quality
+tuning, `download_grants` retention window, novel attribution honesty, screenshot
+resistance, and collusion resistance.
