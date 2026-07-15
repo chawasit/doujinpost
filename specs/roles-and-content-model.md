@@ -118,19 +118,111 @@ Category  ──<  Series  ──<  Chapter   (the readable units, ordered)
                    └──<  Extra        (bonus/supplementary units: omake, art, …)
 ```
 
-## B.1 Category
+## B.1 Classification — categories & tags
 
-Top-level organisation for discovery. A **Series belongs to one or more
-categories** (many-to-many), so a work can sit under both a content-type and a
-genre facet.
+Two complementary systems, deliberately kept separate:
 
-- Two facet kinds: **type** (`manga`, `novel`) and **genre/tag** (action,
-  romance, doujin-circle, fan-translation, …). Type is single-valued per series;
-  genres are multi.
-- Curated by Admins/Mods (creating a top-level category is an Admin action);
-  free-form **tags** on a series are Writer-set and moderatable.
-- `categories(id, kind[type|genre], slug, title, parent_id null)` — allows a
-  shallow tree (e.g. genre → subgenre). `series_categories(series_id, category_id)`.
+| | **Categories** | **Tags** |
+|---|---|---|
+| Purpose | curated **navigation spine** | fine-grained **folksonomy + facets** |
+| Shape | shallow **tree** (category → sub-category) | flat, **namespaced**, high-cardinality |
+| Who edits | Admin/Mod curated | Writer-applied, Mod-canonicalised |
+| Cardinality per series | a few | many |
+| Examples | *Manga → Romance → Yuri* | `theme:isekai`, `creator:circle_xyz`, `warning:gore` |
+
+They're linked, not redundant: a navigation category may be **backed by a tag**
+(e.g. the *Romance* category maps to `genre:romance`) so browsing the tree and
+filtering by tag stay consistent.
+
+### B.1.1 Categories (with sub-categories & descriptions)
+
+A **Series belongs to one or more categories** (many-to-many). Categories form a
+**shallow tree** via `parent_id` — a top-level category has sub-categories one or
+two levels deep (e.g. *Manga → Doujinshi → Parody*). Each category carries
+**presentation metadata** so category landing pages are real, described sections
+rather than bare labels.
+
+```sql
+categories (
+  id uuid pk,
+  kind text,                   -- 'type' (manga|novel) | 'genre'
+  slug text unique,
+  title text,
+  description text,            -- shown on the category landing page (markdown-lite)
+  parent_id uuid null,         -- null = top level; else a sub-category
+  cover_blob bytea null,       -- optional banner/icon
+  backing_tag_id uuid null,    -- optional: keep in sync with a tag (B.1.2)
+  sort_order int,
+  is_listed bool default true, -- hide from nav without deleting
+  created_at timestamptz )
+
+series_categories (series_id uuid, category_id uuid,
+                   primary_flag bool)   -- one primary category per series for canonical breadcrumb
+```
+
+- **type** is single-valued per series (a series is manga *or* novel); **genre**
+  categories are multi.
+- Creating/renaming a top-level category or sub-category is an **Admin/Mod**
+  action; `description` and `cover_blob` let each (sub-)category read as a curated
+  section. Sub-category inherits nothing implicitly — membership is explicit rows,
+  but the tree drives breadcrumbs and faceted nav.
+- `primary_flag` picks the one category used for the canonical URL/breadcrumb when
+  a series sits in several.
+
+### B.1.2 Tags
+
+Tags are **namespaced** labels — a booru-style facet system that scales to the
+long tail (characters, circles, source franchises, content warnings) that a
+curated tree can't.
+
+```sql
+tags (
+  id uuid pk,
+  namespace text,              -- see below
+  name text,                   -- canonical, normalised (lowercase, _-joined)
+  description text,            -- wiki-style blurb shown on tag page / hover
+  state text,                  -- 'active' | 'pending' | 'blocked'
+  is_restricted bool,          -- only mods may apply (e.g. warning:*)
+  usage_count int,             -- denormalised popularity, async-maintained
+  created_by uuid, created_at timestamptz,
+  unique (namespace, name) )
+
+tag_aliases (alias text unique, tag_id uuid)         -- 'genderswap' -> gender_swap
+tag_implications (tag_id uuid, implies_tag_id uuid)  -- shota -> warning:underage
+series_tags (series_id uuid, tag_id uuid, added_by uuid, created_at)
+```
+
+**Namespaces** (the tag's `namespace`):
+
+| Namespace | Meaning | Applied by |
+|---|---|---|
+| `genre` | action, romance, comedy … | Writer |
+| `theme` | isekai, school, revenge … | Writer |
+| `character` | named characters | Writer |
+| `creator` | author / artist / **circle** | Writer |
+| `source` | parodied franchise (for doujin/fan works) | Writer |
+| `language` | text/scanlation language | Writer |
+| `meta` | colored, long-strip, official, fan-translation | Writer |
+| `warning` | gore, nsfw sub-types → **drives age-gating** | **Mod-restricted** |
+
+**Mechanics**
+
+- **Aliases** collapse synonyms/typos to one canonical tag, so filtering and
+  counts don't fragment. Applying an alias resolves to its canonical tag.
+- **Implications** auto-add entailed tags (`shota → warning:underage`,
+  `long_strip → meta:webtoon`). Implication chains are resolved transitively at
+  apply time and re-checked when implications change.
+- **Moderation**: Writer-created tags enter `pending`; a Mod canonicalises,
+  aliases, merges, or `blocked`s them. `warning:*` is `is_restricted` — writers
+  can *request* one but only Mods confirm it, because these tags gate adult
+  content and legal exposure (`PLAN.md` §7). Blocked tags are unappliable and
+  hidden.
+- **Search/browse**: include/exclude tags with AND/OR, faceted counts, and
+  combine with the category tree. Store `series_tags` normalised **and** keep a
+  denormalised `tag_id[]` on `series` with a **GIN index** for fast
+  include/exclude filtering; `usage_count` powers popularity and autocomplete.
+- **Tag pages**: each tag has a `description` (wiki blurb) and lists its series,
+  aliases, and implications — same pattern categories use for their landing pages.
 
 ## B.2 Series
 
@@ -259,4 +351,8 @@ Moderator     ▶ report queue ▶ hidden / sanction ▶ audit_log
 **Test checklist**: role additivity (writer+mod); publisher-rep scope denial
 outside `cat`; writer self-serve gated on L2; ownership grant on series create +
 co-author share; pending_review gate toggles by trust; DMCA vs licensed_removed
-produce different notices; extra reuses chapter pipeline; soft-delete GC.
+produce different notices; extra reuses chapter pipeline; soft-delete GC;
+sub-category tree breadcrumbs + one `primary_flag` per series; category
+description/cover render on landing page; tag alias resolves to canonical; tag
+implication auto-adds transitively; `warning:*` restricted to mods and drives
+age-gate; tag include/exclude filter hits the GIN index; `usage_count` updates.

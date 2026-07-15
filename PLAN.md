@@ -356,11 +356,17 @@ users(id, handle, email, pw_hash, totp_secret, state, created_at)
 roles(user_id, role[reader|writer|moderator|admin|publisher_rep], scope_publisher_id, granted_by, granted_at)
 content_grants(series_id, user_id, grant[owner|coauthor|translator])
 
-categories(id, kind[type|genre], slug, title, parent_id)
+categories(id, kind[type|genre], slug, title, description, parent_id,   -- shallow tree: category > sub-category
+           cover_blob, backing_tag_id, sort_order, is_listed, created_at)
+series_categories(series_id, category_id, primary_flag)                 -- many-to-many, one primary
+tags(id, namespace, name, description, state, is_restricted, usage_count, created_by, created_at)
+tag_aliases(alias, tag_id)                          -- synonyms/typos -> canonical
+tag_implications(tag_id, implies_tag_id)            -- auto-add entailed tags
+series_tags(series_id, tag_id, added_by, created_at)
 series(id, type[manga|novel], title, origin[original|translation], source_ref,
        language, status[ongoing|complete|hiatus|licensed], state, rating,
+       tag_ids[],                                   -- denormalised, GIN-indexed for filtering
        publisher_id, created_by, created_at)
-series_categories(series_id, category_id)          -- many-to-many
 chapters(id, series_id, number, title, kind, is_extra, extra_type,
          state[draft|pending|published|hidden|dmca_disabled|licensed_removed|deleted], release_at)
 notices(id, series_id, author_id, type, body, pinned, state, created_at)
