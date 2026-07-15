@@ -73,6 +73,7 @@ drop-in swap.
 | Concern            | Choice                                   |
 |--------------------|------------------------------------------|
 | App shell          | **PWA** — React + Vite, service worker, Web App Manifest, Web Push |
+| UI base template    | **TailAdmin** (free React edition, MIT) — Tailwind design system, dashboard shells, dark mode |
 | Runtime            | **Bun**                                  |
 | API framework      | **ElysiaJS** (TypeScript) + Eden typed client |
 | Bun workers        | BullMQ (Redis) — transcode/dedup/notify/EPUB |
@@ -84,6 +85,25 @@ drop-in swap.
 | Image transcode    | `sharp` (libvips) → AVIF/WebP            |
 | Auth               | Sessions + Argon2id · Google OIDC · WebAuthn passkeys · TOTP 2FA — see [`specs/authentication.md`](specs/authentication.md) |
 | Deploy             | Docker Compose → k8s; CDN in front       |
+
+**UI base — TailAdmin.** The frontend is scaffolded from the free **TailAdmin
+React** template (React + Vite + Tailwind, MIT-licensed), which gives us the
+design tokens, layout shells, dark mode, and a large stock of prebuilt
+components (tables, forms, modals, charts, alerts) on day one. We use it in two
+tiers:
+
+- **Admin & account surfaces — TailAdmin as-is.** Moderation queue, DMCA
+  console, uploader dashboard, storage/cost analytics (Phase 6), and all
+  settings/auth screens map almost directly onto TailAdmin's dashboard shell,
+  data tables, and form components. This is where the template earns its keep.
+- **Public reader & catalog — custom, on TailAdmin's tokens.** The manga reader,
+  novel reader, and browse grid are bespoke components, but built against the
+  same Tailwind theme (colours, spacing, typography, dark mode) so the whole PWA
+  reads as one product rather than a dashboard bolted to a reader.
+
+Practical notes: keep TailAdmin's config as our Tailwind base and layer a thin
+theme override so upstream updates stay mergeable; strip the demo pages/data on
+first commit; preserve the MIT `LICENSE`/attribution in the frontend package.
 
 ---
 
