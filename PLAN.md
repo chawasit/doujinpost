@@ -156,6 +156,11 @@ traffic.
 4. Tiled/progressive encoding so the reader streams pages at the viewport
    resolution instead of pulling full-res masters.
 
+Full pipeline (rendition ladder, responsive `srcset`, blurhash, and the reader
+itself) is specified in
+[`specs/reader-and-image-delivery.md`](specs/reader-and-image-delivery.md) —
+this is the core service-health win over Nekopost.
+
 ### 2.3 Novels
 
 - Normalise to a canonical internal form (sanitised XHTML chapters + a
@@ -174,11 +179,14 @@ traffic.
 ### 2.5 Delivery path (watermark deferred → CDN-cacheable)
 
 **v1 default: no per-user watermarking.** Reads and downloads serve the **shared,
-deduplicated rendition** straight from cache. Access is gated by a short-TTL
-**signed URL** (entitlement + rating/age checks minted server-side), but the
-bytes are identical for every user, so renditions are **fully CDN-cacheable at
-the edge** — this is the core service-health win over Nekopost (whose slow image
-loading is its #1 complaint). No Python DSP sidecar on the read path.
+deduplicated rendition** straight from cache. Images use **content-addressed,
+immutable URLs** cached forever at the edge; access to *restricted* content is
+gated by **signed cookies** (not per-request signed URLs, which would bust the
+cache), so the cache key stays the content hash and one edge object serves all
+entitled users. Identical bytes per user → **~100% cache-hit ratio once warm** —
+the core service-health win over Nekopost (whose slow image loading is its #1
+complaint). No Python DSP sidecar on the read path. Details:
+[`specs/reader-and-image-delivery.md`](specs/reader-and-image-delivery.md) §A.2.
 
 > If watermarking is later enabled for licensed/official uploads (§3), it applies
 > only to that opt-in subset and only on *downloads/exports*, never in-app reads —
