@@ -340,6 +340,9 @@ audit_log(id, actor, action, subject, meta, ts)    -- append-only
 
 - **Auth**: Argon2id, session cookies (HttpOnly/SameSite), optional TOTP, login
   throttling, breach-password check on set.
+- **Contact verification**: email + SMS control-of-channel checks gate uploading,
+  posting, and downloading via a `verification_level` — see
+  [`specs/user-verification.md`](specs/user-verification.md).
 - **Uploads**: strict MIME/magic sniffing, image bomb limits, metadata strip,
   virus scan hook, per-account quotas.
 - **Access**: entitlement checks on every download; signed, short-TTL URLs; no
