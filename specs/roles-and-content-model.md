@@ -212,15 +212,18 @@ series_tags (series_id uuid, tag_id uuid, added_by uuid, created_at)
 - **Implications** auto-add entailed tags (`shota → warning:underage`,
   `long_strip → meta:webtoon`). Implication chains are resolved transitively at
   apply time and re-checked when implications change.
-- **Moderation**: Writer-created tags enter `pending`; a Mod canonicalises,
-  aliases, merges, or `blocked`s them. `warning:*` is `is_restricted` — writers
-  can *request* one but only Mods confirm it, because these tags gate adult
-  content and legal exposure (`PLAN.md` §7). Blocked tags are unappliable and
-  hidden.
+- **Two layers — curated vocabulary, voted assignment.** The tag *vocabulary*
+  (which tags exist, aliases, implications, blocked/restricted) is **Mod-curated**:
+  new tags enter `pending`; a Mod canonicalises, aliases, merges, or `blocked`s
+  them. But *which tags apply to a given series* is **community-voted** (E-Hentai
+  style) — see [`specs/tag-voting.md`](specs/tag-voting.md). `warning:*` stays
+  `is_restricted`: only Mods confirm it (votes can suggest, never decide), because
+  it gates adult content and legal exposure (`PLAN.md` §7).
 - **Search/browse**: include/exclude tags with AND/OR, faceted counts, and
-  combine with the category tree. Store `series_tags` normalised **and** keep a
-  denormalised `tag_id[]` on `series` with a **GIN index** for fast
-  include/exclude filtering; `usage_count` powers popularity and autocomplete.
+  combine with the category tree. Store `series_tags` normalised (with vote
+  score/state) **and** keep a denormalised `tag_id[]` of **confirmed** tags on
+  `series` with a **GIN index** for fast include/exclude filtering; `usage_count`
+  counts confirmed assignments only, powering popularity and autocomplete.
 - **Tag pages**: each tag has a `description` (wiki blurb) and lists its series,
   aliases, and implications — same pattern categories use for their landing pages.
 

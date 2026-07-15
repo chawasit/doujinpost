@@ -13,9 +13,11 @@ A self-publishing platform for doujin **manga** (image sets) and **novels**
 - **Community features** — shoutbox, title requests, creator profiles,
   gamification/badges, ranking pages, public ratings — see
   [`specs/community-features.md`](specs/community-features.md).
-- **Discovery** — cross-lingual **semantic search** (hybrid lexical + LLM
-  embeddings, LEANN for deep text; [`specs/search.md`](specs/search.md)) over an
-  **IMDB-style entity/credit graph** with community **wiki relations**
+- **Discovery** — **tag-first** search (community-**voted** tags, E-Hentai style,
+  [`specs/tag-voting.md`](specs/tag-voting.md)) → name → cross-lingual **semantic**
+  meaning-inference (hybrid lexical + LLM embeddings, LEANN for deep text;
+  [`specs/search.md`](specs/search.md)), over an **IMDB-style entity/credit graph**
+  with community **wiki relations**
   ([`specs/entities-and-relations.md`](specs/entities-and-relations.md)).
 - **Comments + a basic webboard** (forum).
 - **A DMCA takedown pipeline** — notice intake, escrow/takedown, counter-notice,
@@ -406,11 +408,14 @@ series_categories(series_id, category_id, primary_flag)                 -- many-
 tags(id, namespace, name, description, state, is_restricted, usage_count, created_by, created_at)
 tag_aliases(alias, tag_id)                          -- synonyms/typos -> canonical
 tag_implications(tag_id, implies_tag_id)            -- auto-add entailed tags
-series_tags(series_id, tag_id, added_by, created_at)
+-- community tag voting (E-Hentai style) — see specs/tag-voting.md
+series_tags(series_id, tag_id, proposed_by, score, state[proposed|confirmed|rejected|locked], locked_by, created_at)
+tag_votes(series_id, tag_id, user_id, value[+1|-1], weight, created_at)   -- one per user
+tagger_rep(user_id, score, confirmed, rejected, updated_at)               -- reputation -> vote weight
 series(id, type[manga|novel], title, origin[original|translation], source_ref,
        language, status[ongoing|complete|hiatus|licensed], state, rating,
        reading_mode[paged_ltr|paged_rtl|vertical],  -- drives which reader loads (webtoon = vertical)
-       tag_ids[],                                   -- denormalised, GIN-indexed for filtering
+       tag_ids[],                                   -- denormalised CONFIRMED tags, GIN-indexed for tag-first filtering
        publisher_id, created_by, created_at)
 chapters(id, series_id, number, title, kind, is_extra, extra_type,
          state[draft|pending|published|hidden|dmca_disabled|licensed_removed|deleted], release_at)

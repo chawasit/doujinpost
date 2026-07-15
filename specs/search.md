@@ -15,14 +15,30 @@ construction.
 
 ## 1. Approach: hybrid (lexical ⊕ vector), symmetric embeddings
 
-Two retrievers, fused — neither alone is enough:
+**Retrieval priority — tags first, then name, then meaning.** This is the
+E-Hentai/nhentai search model and it's deliberate:
 
+1. **Tags are the first-class axis.** A namespaced, **community-voted**
+   (`specs/tag-voting.md`) tag query is the most precise, most trusted signal —
+   `artist:foo language:thai theme:isekai -warning:gore`. Tag filters are
+   **structured predicates**, not ranked guesses: they include/exclude with
+   AND/OR/NOT over the confirmed-tag GIN index and *constrain* everything below.
+2. **Name** — titles, alt/romaji titles, entity names (lexical/BM25). Exact
+   things users type verbatim.
+3. **Meaning** — symmetric embeddings infer *intent/goal* for natural-language
+   queries and power "more like this", when tags+name don't capture what the user
+   means.
+
+Under the hood these are the same two retrievers, fused — but **tags gate and
+outrank** name, which outranks semantic:
+
+- **Tag predicates** (structured): the hard include/exclude frame + a strong
+  ranking boost. First citizen.
 - **Lexical** (Postgres FTS / BM25): exact titles, entity names, tag slugs, IDs.
-  Precise on things users type verbatim; blind to meaning and to Thai/CJK
-  segmentation edge cases.
+  Precise on verbatim input; blind to meaning and Thai/CJK segmentation.
 - **Vector** (embeddings + ANN): semantic, paraphrase-tolerant, typo-tolerant,
   and **cross-lingual** — a Thai query finds an English-titled series because the
-  multilingual model maps them near each other.
+  multilingual model maps them near each other. The meaning-inference layer.
 
 **Symmetric embeddings**: one model embeds *both* the query and the content into
 the **same space**, so query↔item and item↔item are directly comparable. This is
@@ -104,19 +120,26 @@ Embedding a series *with its entity and relation context* (from
 ## 5. Query pipeline
 
 ```
-1. parse query → detect explicit filters (tag:, author:, lang:, type:)
-2. embed query (Redis-cached) ;  run lexical (FTS) in parallel
-3. ANN: pgvector (series/entity) [+ LEANN for deep-text scope]
-4. FUSE lexical ⊕ vector via RRF → single ranked list
-5. HARD FILTERS (not re-ranking): drop unpublished/dmca/deleted state,
+1. parse query → split TAG PREDICATES (namespace:name, +include / -exclude,
+   resolved through aliases) from free text. E-Hentai-style syntax:
+   `artist:foo -warning:gore language:thai   cute cooking rivals`
+2. TAG FRAME (first citizen): apply include/exclude over the confirmed-tag
+   GIN index → the candidate set every later step is constrained to.
+   A pure-tag query needs no embedding at all — just the index.
+3. if free text remains: embed it (Redis-cached) ; run lexical (FTS) in parallel
+4. ANN: pgvector (series/entity) [+ LEANN for deep-text scope], within the frame
+5. FUSE via RRF with priority weight  tags ≫ name(lexical) ≫ semantic
+6. HARD FILTERS (not re-ranking): drop unpublished/dmca/deleted state,
    blocked tags, and age-gated warning:* above the viewer's setting
    (specs/roles-and-content-model.md, history-follows-recommendations.md)
-6. re-rank: popularity/recency signal (rankings) as a light boost
-7. return with highlights + "why" (matched title / semantic / by author X)
+7. re-rank: popularity/recency signal (rankings) as a light boost
+8. return with highlights + "why" (matched tags / title / semantic / by author X)
 ```
 
-- **Filters are hard constraints**, consistent with recs (age-gate never leaks
-  through search).
+- **Only `confirmed` tags** (`specs/tag-voting.md`) participate in the tag frame
+  and counts — voted-down/proposed tags never constrain or leak into results.
+- **Tag predicates are hard constraints**; so are state/age filters — consistent
+  with recs (age-gate never leaks through search).
 - **Autocomplete**: lexical prefix on titles/entities/tags for instant
   suggestions; semantic kicks in on full submit.
 - **"More like this"**: symmetric series→series ANN, blended with explicit
