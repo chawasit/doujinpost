@@ -346,27 +346,49 @@ conflated in the UI.
 
 ## 6. Data model (core tables)
 
+Roles, grants, and the `Category → Series → [Chapter · Notice · Extra]`
+hierarchy are specified in full in
+[`specs/roles-and-content-model.md`](specs/roles-and-content-model.md); the core
+tables:
+
 ```
-users(id, handle, email, pw_hash, roles, totp_secret, state, created_at)
-works(id, kind[manga|novel], title, uploader_id, tags, state, rating, created_at)
-chapters(id, work_id, index, title)
+users(id, handle, email, pw_hash, totp_secret, state, created_at)
+roles(user_id, role[reader|writer|moderator|admin|publisher_rep], scope_publisher_id, granted_by, granted_at)
+content_grants(series_id, user_id, grant[owner|coauthor|translator])
+
+categories(id, kind[type|genre], slug, title, parent_id)
+series(id, type[manga|novel], title, origin[original|translation], source_ref,
+       language, status[ongoing|complete|hiatus|licensed], state, rating,
+       publisher_id, created_by, created_at)
+series_categories(series_id, category_id)          -- many-to-many
+chapters(id, series_id, number, title, kind, is_extra, extra_type,
+         state[draft|pending|published|hidden|dmca_disabled|licensed_removed|deleted], release_at)
+notices(id, series_id, author_id, type, body, pinned, state, created_at)
+
 blobs(b3_hash PK, size, mime, tier, refcount, created_at)
-manifest_entries(work_id, chapter_id, page_index, blob_hash, rendition)
+manifest_entries(series_id, chapter_id, page_index, blob_hash, rendition)
 phash_index(blob_hash, phash)                      -- perceptual dedup
-download_grants(id, user_id, work_id, token, issued_at, ip_trunc, ua_hash)
-watermark_seeds(work_id, seed, algo_version)       -- secret, in KMS ref
-comments(id, work_id, author_id, parent_id, body, state, created_at)
+download_grants(id, user_id, series_id, token, issued_at, ip_trunc, ua_hash)
+watermark_seeds(series_id, seed, algo_version)     -- secret, in KMS ref
+
+comments(id, series_id, author_id, parent_id, body, state, created_at)
 boards(id, slug, title, mod_roles)
 threads(id, board_id, title, author_id, locked, pinned, created_at)
 posts(id, thread_id, author_id, body, state, created_at)
 reports(id, target_type, target_id, reporter_id, reason, state)
 moderation_actions(id, actor_id, target_type, target_id, action, note, ts)
-dmca_notices(id, claimant, target_work_id, statements, state, ts)
+
+publishers(id, name, verified_at, verified_by)
+rights_claims(id, publisher_id, series_id, state, evidence, decided_by, decided_at)
+dmca_notices(id, claimant, target_series_id, statements, state, ts)
 dmca_counter_notices(id, notice_id, uploader_id, statements, ts)
 strikes(id, uploader_id, notice_id, ts)
 dmca_events(id, notice_id, event, actor, ts)       -- append-only
 audit_log(id, actor, action, subject, meta, ts)    -- append-only
 ```
+
+Extras are chapters with `is_extra = true` (reusing the whole upload/storage/
+watermark/reader pipeline); Notices are lightweight text, never watermarked.
 
 ---
 
