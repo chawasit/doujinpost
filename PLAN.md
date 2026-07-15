@@ -28,47 +28,61 @@ in detail, and a phased roadmap. It is design-only — no code is committed yet.
 ## 1. Architecture at a glance
 
 ```
-                    ┌────────────────────────────────────────────┐
-   Browser  ───────▶│  Next.js (React) web app  ·  CDN edge cache │
-                    └───────────────┬────────────────────────────┘
-                                    │  REST/JSON + signed URLs
-                    ┌───────────────▼────────────────┐
-                    │  API — FastAPI (Python)         │
-                    │  auth · catalog · comments ·    │
-                    │  forum · DMCA · download broker  │
-                    └───┬───────────┬─────────┬───────┘
-                        │           │         │
-              ┌─────────▼──┐  ┌─────▼─────┐  ┌▼──────────────┐
-              │ PostgreSQL │  │  Redis    │  │ Object store  │
-              │ (metadata) │  │ queue+cache│  │ S3 / MinIO   │
-              └────────────┘  └─────┬─────┘  │  CAS blobs    │
-                                    │        └───────────────┘
-                        ┌───────────▼─────────────┐
-                        │  Worker pool (RQ/Celery) │
-                        │  ingest · transcode ·    │
-                        │  dedup · watermark-render │
-                        └──────────────────────────┘
+              ┌──────────────────────────────────────────────────┐
+   Browser  ─▶│  PWA — React + Vite (installable, service worker) │
+              │  offline reader cache · Web Push · add-to-home    │
+              └───────────────┬──────────────────────────────────┘
+                              │  REST/JSON + signed URLs · CDN edge
+              ┌───────────────▼──────────────────────┐
+              │  API — ElysiaJS on Bun (TypeScript)   │
+              │  auth (password · Google · passkey) · │
+              │  catalog · comments · forum · DMCA ·  │
+              │  download broker                      │
+              └───┬───────────┬─────────┬─────────────┘
+                  │           │         │        │ enqueue jobs
+        ┌─────────▼──┐  ┌─────▼─────┐  ┌▼─────────────┐  │
+        │ PostgreSQL │  │  Redis    │  │ Object store │  │
+        │ (metadata) │  │ queue+cache│  │  S3 / MinIO │  │
+        └────────────┘  └─────┬─────┘  │  CAS blobs   │  │
+                              │        └──────────────┘  │
+              ┌───────────────▼────────────┐   ┌─────────▼──────────────┐
+              │ Bun workers (TS)           │   │ Media/watermark worker │
+              │ transcode (sharp/libvips)· │   │ (Python: NumPy/SciPy/  │
+              │ dedup · notify · EPUB      │   │ reedsolo) — DCT embed  │
+              └────────────────────────────┘   │ + fountain/RS chain    │
+                                                └────────────────────────┘
 ```
 
-**Why this split.** Image/text processing (Pillow, NumPy, SciPy, `reedsolo`,
-zstd) is far more mature in Python, and the watermark math lives there; FastAPI
-keeps the API in the same language as the workers. Next.js gives SSR reader
-pages and a good image-reader UX. Heavy work (transcode, watermark render) is
-async on a queue so uploads and downloads never block on CPU.
+**Why this split (the polyglot boundary).** The user-facing app and API are a
+single TypeScript codebase on **Bun + ElysiaJS**, shipped as an installable
+**PWA** — Elysia's end-to-end types (Eden client) give the React frontend a
+typed API with no codegen, and Bun keeps dev/CI fast. Most workers (transcode
+via `sharp`/libvips, dedup, EPUB build, notifications) are Bun too.
+
+The **one exception** is the forensic-watermark DSP from §3: mid-band DCT
+spread-spectrum embedding, Reed–Solomon, and fountain/LT decoding are far more
+mature and correct in Python's NumPy/SciPy/`reedsolo` stack than anything on the
+JS side. So the **media/watermark worker stays a Python service**, reached over
+the same Redis job queue behind a stable job contract. This isolates the only
+CPU-heavy, math-sensitive component and lets the rest of the system stay uniform
+TypeScript. If a pure-Bun DSP path proves out later, the contract makes it a
+drop-in swap.
 
 **Stack**
 
 | Concern            | Choice                                   |
 |--------------------|------------------------------------------|
-| Frontend           | Next.js + TypeScript + Tailwind          |
-| API                | Python 3.12 + FastAPI + Pydantic         |
-| Workers            | RQ (Redis) or Celery                     |
-| DB                 | PostgreSQL 16                            |
+| App shell          | **PWA** — React + Vite, service worker, Web App Manifest, Web Push |
+| Runtime            | **Bun**                                  |
+| API framework      | **ElysiaJS** (TypeScript) + Eden typed client |
+| Bun workers        | BullMQ (Redis) — transcode/dedup/notify/EPUB |
+| Media/watermark    | **Python** sidecar (NumPy, SciPy, `reedsolo`) on the same queue |
+| DB                 | PostgreSQL 16 (Drizzle ORM)              |
 | Cache / queue      | Redis                                    |
 | Object storage     | S3-compatible (MinIO self-host, or S3)   |
 | Search             | Postgres FTS first; OpenSearch if needed |
-| Auth               | Session cookies + Argon2id; TOTP 2FA     |
-| Media libs         | Pillow, pillow-avif, NumPy, SciPy, reedsolo, zstandard |
+| Image transcode    | `sharp` (libvips) → AVIF/WebP            |
+| Auth               | Sessions + Argon2id · Google OIDC · WebAuthn passkeys · TOTP 2FA — see [`specs/authentication.md`](specs/authentication.md) |
 | Deploy             | Docker Compose → k8s; CDN in front       |
 
 ---
@@ -338,8 +352,10 @@ audit_log(id, actor, action, subject, meta, ts)    -- append-only
 
 ## 7. Security, abuse, and legal posture
 
-- **Auth**: Argon2id, session cookies (HttpOnly/SameSite), optional TOTP, login
-  throttling, breach-password check on set.
+- **Auth**: three sign-in methods — password (Argon2id), **Google Sign-In**
+  (OIDC), and **passkeys** (WebAuthn/FIDO2) — over server-side sessions
+  (HttpOnly/SameSite cookies), with optional TOTP 2FA, login throttling, and
+  breach-password checks. Full design in [`specs/authentication.md`](specs/authentication.md).
 - **Contact verification**: email + SMS control-of-channel checks gate uploading,
   posting, and downloading via a `verification_level` — see
   [`specs/user-verification.md`](specs/user-verification.md).

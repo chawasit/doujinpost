@@ -171,17 +171,18 @@ Postgres (durable).
 
 ## 7. Provider abstraction
 
-```python
-class Notifier(Protocol):
-    def send_email(self, to: str, template: str, ctx: dict) -> SendResult: ...
-    def send_sms(self, to_e164: str, body: str) -> SendResult: ...
+```ts
+interface Notifier {
+  sendEmail(to: string, template: string, ctx: Record<string, unknown>): Promise<SendResult>;
+  sendSms(toE164: string, body: string): Promise<SendResult>;
+}
 ```
 
 - Concrete adapters: `SesNotifier` / `SendgridNotifier`, `TwilioNotifier` /
   `VonageNotifier`. Selected by config; no call site knows the vendor.
-- Sends run in the **worker queue**, not inline in the request, with retry +
-  dead-letter. A `SendResult` (provider id, status) is logged for delivery
-  auditing and cost tracking.
+- Sends run on the **Bun worker queue** (BullMQ), not inline in the request, with
+  retry + dead-letter. A `SendResult` (provider id, status) is logged for
+  delivery auditing and cost tracking.
 - Templates versioned; localisation-ready (user locale → template variant).
 - Secrets (API keys) in KMS/secret store, never in the DB or repo.
 
