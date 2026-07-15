@@ -13,6 +13,10 @@ A self-publishing platform for doujin **manga** (image sets) and **novels**
 - **Community features** — shoutbox, title requests, creator profiles,
   gamification/badges, ranking pages, public ratings — see
   [`specs/community-features.md`](specs/community-features.md).
+- **Discovery** — cross-lingual **semantic search** (hybrid lexical + LLM
+  embeddings, LEANN for deep text; [`specs/search.md`](specs/search.md)) over an
+  **IMDB-style entity/credit graph** with community **wiki relations**
+  ([`specs/entities-and-relations.md`](specs/entities-and-relations.md)).
 - **Comments + a basic webboard** (forum).
 - **A DMCA takedown pipeline** — notice intake, escrow/takedown, counter-notice,
   repeat-infringer accounting.
@@ -98,7 +102,7 @@ without touching the rest of the system.
 | DB                 | PostgreSQL 16 (Drizzle ORM)              |
 | Cache / queue      | Redis                                    |
 | Object storage     | S3-compatible (MinIO self-host, or S3)   |
-| Search             | Postgres FTS first; OpenSearch if needed |
+| Search             | **Hybrid**: Postgres FTS (lexical) ⊕ vector (pgvector HNSW; **LEANN** for deep text) with a self-hosted multilingual embedding model — see [`specs/search.md`](specs/search.md) |
 | Image transcode    | `sharp` (libvips) → AVIF/WebP            |
 | Auth               | Sessions + Argon2id · Google OIDC · WebAuthn passkeys · TOTP 2FA — see [`specs/authentication.md`](specs/authentication.md) |
 | Deploy             | Docker Compose → k8s; CDN in front       |
@@ -453,6 +457,15 @@ posts(id, thread_id, author_id, body, state, created_at)
 reports(id, target_type, target_id, reporter_id, reason, state)
 moderation_actions(id, actor_id, target_type, target_id, action, note, ts)
 
+-- entities, relations & wiki — see specs/entities-and-relations.md
+entities(id, type[person|circle|company|magazine|brand|character], name, alt_names[], bio, links, image_blob, linked_user_id, state, merged_into, created_at)
+entity_credits(series_id, entity_id, role, note)     -- story_writer|illustrator|author|original_creator|...
+series_relations(from_series, to_series, relation)   -- sequel|spin_off|adaptation_of|shares_universe|... (auto-inverse)
+entity_relations(from_entity, to_entity, relation)   -- alias_of|member_of|imprint_of|collab_with
+wiki_revisions(id, target_type, target_id, editor_id, diff, state, note, created_at)  -- append-only history
+-- search index — see specs/search.md
+embeddings(doc_type, doc_id, vector, model_version)  -- pgvector (series/entity); LEANN for deep text
+
 publishers(id, name, verified_at, verified_by)
 rights_claims(id, publisher_id, series_id, state, evidence, decided_by, decided_at)
 dmca_notices(id, claimant, target_series_id, statements, state, ts)
@@ -499,7 +512,7 @@ Nekopost-parity community texture and the image-delivery win first.
 |------:|-------------|
 | **0** | Repo scaffold, Docker Compose (Postgres/Redis/MinIO), CI, auth (password/Google), migrations. |
 | **1** | Upload → CAS ingest → AVIF/WebP transcode → **manga + webtoon (vertical) reader**; novel canonicalise + reader. Signed-URL delivery, **CDN edge caching**. Exact + perceptual dedup. |
-| **2** | Catalog: categories/sub-cats + tags, search (CJK/Thai), **ranking pages** (Weekly Popular / Latest / Recommended), public ratings. |
+| **2** | Catalog: categories/sub-cats + tags; **hybrid semantic search** (lexical ⊕ multilingual vectors, cross-lingual Thai/JP/EN + "more like this"); **entities + credits + relations** (IMDB-style); **ranking pages** (Weekly Popular / Latest / Recommended); public ratings. |
 | **3** | **Community pack** — creator profiles, shoutbox, title requests, comments; reading history + library + follows/notifications. See `specs/community-features.md`. |
 | **4** | **Gamification** — badges/points/levels; webboard/forum on the shared content/moderation core. |
 | **5** | DMCA intake → takedown → counter-notice → strikes → transparency log; T&S/legal spine (`docs/gaps-and-risks.md`). |
@@ -514,8 +527,10 @@ Nekopost-parity community texture and the image-delivery win first.
 **Live (v1):**
 1. **Jurisdiction & operator entity**: the nonprofit legal home decides DMCA
    specifics, age-gating rules, and who holds safe-harbour.
-2. **Search engine**: does Postgres FTS cover Thai/CJK tokenisation acceptably,
-   or do we need OpenSearch + a Thai analyser from the start? (gaps #8)
+2. ~~**Search engine**: Thai/CJK tokenisation~~ — **resolved**: hybrid lexical ⊕
+   multilingual-embedding vector search sidesteps word-segmentation and is
+   cross-lingual (`specs/search.md`). Remaining sub-choice: which embedding model
+   and CPU-vs-GPU hosting budget.
 3. **Gamification economy**: what do points/badges reward, and how do we avoid
    incentivising low-quality spam uploads? (`specs/community-features.md`)
 4. **Shoutbox moderation load**: real-time chat is a moderation sink — global,
