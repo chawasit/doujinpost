@@ -19,6 +19,19 @@ A self-publishing platform for doujin **manga** (image sets) and **novels**
 This document is the build plan: architecture, data model, the watermark scheme
 in detail, and a phased roadmap. It is design-only — no code is committed yet.
 
+> **Project posture — open-source, nonprofit, self-hostable.** There is **no
+> monetization**: no payments, subscriptions, tips, ads, or creator payouts. The
+> codebase is open-source (license TBD — see `docs/gaps-and-risks.md`), the stack
+> is chosen so a community can self-host, and sustainability comes from
+> **donations, grants, and volunteer labour**, not in-app commerce. This deletes
+> the payment-processor and VAT problems — but it does **not** reduce the legal
+> and trust-&-safety obligations (illegal-content detection, age-gating, DMCA
+> safe-harbour, GDPR). A volunteer nonprofit has *less* compliance budget, so
+> those must be cheap-by-design, not skipped. Hosting/egress cost — especially
+> the per-user watermark (§3) — is now a direct threat to a donation-funded
+> budget, which pushes watermarking toward downloads/exports only, not in-app
+> reads.
+
 > **Scope & intent.** The watermarking here is *defensive* anti-piracy /
 > leak-attribution on content the platform is licensed to distribute. It stamps
 > the downloading account's own identifier into their own copy. It is not a tool

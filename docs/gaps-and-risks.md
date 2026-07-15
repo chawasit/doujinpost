@@ -28,14 +28,29 @@ Adult content implies real obligations: age-gating that actually verifies age
 people, US 18 U.S.C. §2257 record-keeping. The plan has a `rating` field and a
 hand-wave to "age gating." That's not compliance.
 
-### 3. Payments will get you deplatformed, and you have no plan for them
-There is **zero** monetization design, but the bigger problem is the one you
-haven't hit yet: **Visa/Mastercard/PayPal/Stripe restrict or ban adult
-content.** Pornhub (2020) and OnlyFans (near-miss 2021) show this is
-existential, not hypothetical. If writers get paid, if there's a subscription,
-tips, or "coins," you need adult-friendly processors (CCBill, Segpay, crypto),
-payout rails (tax forms, 1099/DAC7), chargeback/fraud handling, and EU/UK **VAT
-on digital goods** (OSS/MOSS). None of it exists.
+### 3. Payments — DESCOPED (open-source, nonprofit, no monetization)
+**Resolved by decision, not by build.** The project is open-source and nonprofit
+with **no payments/subscriptions/tips/ads/payouts**, so the
+adult-content-processor trap (Visa/MC/PayPal/Stripe bans), payout tax rails, and
+EU/UK VAT all **go away**. Good — that was the ugliest commercial problem.
+
+What replaces it, though, is a **sustainability** problem, not a nonexistent one:
+- **Hosting/egress cost** is now funded by donations/grants, which makes the
+  Tier-1 watermark-CDN cost bomb (#5) a *budget* threat, not just an engineering
+  one. Strong reason to watermark downloads/exports only, not in-app reads.
+- Even donations touch a processor eventually (Stripe/PayPal/OpenCollective for a
+  *nonprofit* is far less fraught than *adult commerce*, but "adult site" can
+  still trip provider ToS) — keep donation handling **off-platform** (a fiscal
+  host / OpenCollective / Ko-fi) so the app itself never processes money.
+- Add **open-source project hygiene** the plan hasn't: a LICENSE (AGPL vs.
+  permissive — AGPL keeps hosted forks open), CONTRIBUTING, CoC, a governance
+  model, self-host docs, and a clear line on who is the legal operator of the
+  flagship instance (a nonprofit entity needs to actually exist to hold
+  safe-harbour and receive notices).
+
+> Nonprofit status does **not** grant legal immunity. Tier-0 items 1, 2, 4 below
+> apply in full — arguably harder, because a volunteer org has no compliance
+> budget. Build them cheap, don't skip them.
 
 ### 4. GDPR/CCPA vs. your own watermark and audit logs — a direct contradiction
 The plan promises **right-to-erasure**-shaped privacy *and* forensic
@@ -138,12 +153,15 @@ translator grant" is too thin for how scanlation actually works.
 ## Suggested reprioritisation
 
 The current roadmap builds the cool crypto before the things that keep you out of
-court and out of bankruptcy. A saner order:
+court. With payments descoped (nonprofit), a saner order:
 
 1. **Legal/T&S spine first** — content policy, CSAM detection + NCMEC reporting,
-   age-gating, DMCA (already planned), GDPR retention model.
+   age-gating, DMCA (already planned), GDPR retention model. Cheap-by-design,
+   because there's no compliance budget.
 2. **Core product** — archive ingest, a real reader, real search, i18n.
-3. **Money** — adult-friendly payments + payouts + VAT, *if* monetized.
+3. **Sustainability & OSS hygiene** — LICENSE/governance/self-host docs, a real
+   nonprofit operator entity, off-platform donations, and a hosting **cost model**
+   (egress + watermark compute) the donation budget can actually carry.
 4. **Ops** — backups/DR/observability.
 5. **Then** the watermark — with **collusion-secure codes** and a **CDN cost
    model**, and probably only on *downloads/exports*, not in-app reads.
