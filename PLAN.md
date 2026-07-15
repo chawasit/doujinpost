@@ -12,6 +12,9 @@ A self-publishing platform for doujin **manga** (image sets) and **novels**
 - **Comments + a basic webboard** (forum).
 - **A DMCA takedown pipeline** — notice intake, escrow/takedown, counter-notice,
   repeat-infringer accounting.
+- **Personalisation** — private reading history ("continue reading"), follows/
+  library, and blended recommendations — see
+  [`specs/history-follows-recommendations.md`](specs/history-follows-recommendations.md).
 
 This document is the build plan: architecture, data model, the watermark scheme
 in detail, and a phased roadmap. It is design-only — no code is committed yet.
@@ -376,6 +379,16 @@ manifest_entries(series_id, chapter_id, page_index, blob_hash, rendition)
 phash_index(blob_hash, phash)                      -- perceptual dedup
 download_grants(id, user_id, series_id, token, issued_at, ip_trunc, ua_hash)
 watermark_seeds(series_id, seed, algo_version)     -- secret, in KMS ref
+
+-- personalisation — see specs/history-follows-recommendations.md
+read_progress(user_id, series_id, chapter_id, position, percent, updated_at)  -- "continue reading"
+read_events(user_id, series_id, chapter_id, event, dwell_ms, ts)              -- append-only, TTL-trimmed
+library(user_id, series_id, shelf, rating, is_private, updated_at)            -- reading|planned|completed|on_hold|dropped|favorite
+follows(user_id, target_type[series|creator|user|tag], target_id, notify[], created_at)
+notifications(id, user_id, type, subject_ref, read_at, created_at)
+user_taste(user_id, tag_id, weight, updated_at)                              -- content-based profile
+item_similarity(series_id, other_series_id, score, method, computed_at)      -- batch collaborative
+trending(scope, series_id, score, window, computed_at)
 
 comments(id, series_id, author_id, parent_id, body, state, created_at)
 boards(id, slug, title, mod_roles)
